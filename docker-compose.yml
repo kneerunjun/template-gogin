@@ -1,0 +1,35 @@
+version: '3.1'
+
+services:
+  srvapi:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - SRC=${SRCDIR}
+        - LOG=${LOGDIR}
+        - RUN=${RUNDIR}
+        - ETC=${ETCDIR}
+        - BIN=${BINDIR}
+        - APPNAME=${APPNAME}
+    ports:
+      - 8080:8080
+    volumes:
+      - ${LOGDIR}:${LOGDIR}
+    # links:
+    #   - mongostore
+    # depends_on:
+    #   mongostore:
+    #     condition: service_healthy
+    environment: 
+      - LOGF=${LOGDIR}/botmincock.log
+      - GIN_MODE=${GIN_MODE}
+    stdin_open: ${TTYSTDIN} 
+    tty: ${TTYSTDIN}
+    container_name: ctn_srvapi
+    entrypoint: ["${BINDIR}/entry.sh", "-v ${VERBOSE}", "-f ${FLOG}"]
+    secrets:
+      - my_secret
+secrets:
+  my_secret:
+    file: sample.secret
