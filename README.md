@@ -28,7 +28,7 @@ We are hence making up a template that can when used a __boiler-plate__, be re-u
 ### How to use the template?
 -----
 
-Clone the repository to your local machine. `cd` into directory 
+Clone the repository to your local machine. `cd` into directory and issue the following commands 
 
 ```sh
 docker-compose --env-file dev.env build

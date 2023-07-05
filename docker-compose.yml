@@ -1,6 +1,17 @@
 version: '3.1'
 
 services:
+  msgbroker:
+    image: rabbitmq:3-management-alpine
+    container_name: ctn_msgbrokr
+    ports:
+      - 5672:5672   # for sender and consumer connections
+      - 15672:15672 # for serve RabbitMQ GUI
+    volumes:
+      - ${HOME}/dev-rabbitmq/data/:/var/lib/rabbitmq
+      - ${HOME}/dev-rabbitmq/log/:/var/log/rabbitmq
+    networks:
+      - dev-network
   srvapi:
     build: 
       context: .
@@ -21,6 +32,8 @@ services:
     # depends_on:
     #   mongostore:
     #     condition: service_healthy
+    networks:
+      - dev-network
     environment: 
       - LOGF=${LOGDIR}/botmincock.log
       - GIN_MODE=${GIN_MODE}
@@ -33,3 +46,6 @@ services:
 secrets:
   my_secret:
     file: sample.secret
+networks:
+  dev-network:
+    driver: bridge
