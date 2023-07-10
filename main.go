@@ -1,17 +1,32 @@
 package main
 
+/* ==================
+ - This microservice will host an api endpoint implementation
+ - this serves as the bolier plate code for implementation of api endpoint behind a u-service
+ - also since we plan to use rabbitmq as the broker of messages between the u-services,
+ - we get to see how we can integrate amqp code in endpoint handler
+================== */
+
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"net/http"
 	"os"
 
 	"github.com/gin-gonic/gin"
+	amqp "github.com/rabbitmq/amqp091-go"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
 	FVerbose, FLogF bool
 	logFile         string
+)
+
+const (
+	AMQP_SERVER_URL = "amqp://guest:guest@msgbroker:5672" //broker url
+	QUEUE_KEY       = "TestQueue1"                        // key of the queue to be used when sending receiving
 )
 
 /*
@@ -62,8 +77,59 @@ func init() {
 	logFile = os.Getenv("LOGF")
 }
 
-func main() {
+/*
+	=============
 
+Handler to test rabbitmq server and dispatching messages to the same
+Declares a simple channel + queue and sends a json hello world message across
+Incases of error a 502 error is reported back
+================
+*/
+func TestRabbit(c *gin.Context) {
+	conn, err := amqp.Dial(AMQP_SERVER_URL)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to connect with AMQP server")
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	defer conn.Close()
+	rabbitCh, err := conn.Channel()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to declare rabbit channel")
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	defer rabbitCh.Close()
+	_, err = rabbitCh.QueueDeclare(QUEUE_KEY, true, false, false, false, nil)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to declare queue with broker")
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	body := struct {
+		Msg string `json:"msg"`
+	}{Msg: "Hello world"}
+	jsonMsg, _ := json.Marshal(body)
+	err = rabbitCh.PublishWithContext(context.TODO(), "", QUEUE_KEY, false, false, amqp.Publishing{
+		ContentType: "application/json",
+		Body:        []byte(jsonMsg),
+	})
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to send message to broker")
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	c.AbortWithStatus(http.StatusOK)
+}
+func main() {
 	/* ++++++++++++++++++++++
 	command line arguments as configuration for
 	- logging verbosity
@@ -107,5 +173,7 @@ func main() {
 			// "logtofile": FLogF,
 		})
 	})
+	// Hit this endpoint to see this u-service send a message to the messaging queue
+	api.POST("/rabbit/test", TestRabbit)
 	log.Fatal(r.Run(":8080"))
 }
