@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -85,49 +86,67 @@ Declares a simple channel + queue and sends a json hello world message across
 Incases of error a 502 error is reported back
 ================
 */
-func TestRabbit(c *gin.Context) {
+func TestRabbit(rabbitCh *amqp.Channel) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		body := struct {
+			Msg string `json:"msg"`
+		}{Msg: "Hello world"}
+		jsonMsg, _ := json.Marshal(body)
+		err := rabbitCh.PublishWithContext(context.TODO(), "", QUEUE_KEY, false, false, amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(jsonMsg),
+		})
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+			}).Error("failed to send message to broker")
+			c.AbortWithStatus(http.StatusBadGateway)
+			return
+		}
+		c.AbortWithStatus(http.StatusOK)
+	}
+}
+
+// listenOnRabbit : sets up a background process
+func listenOnRabbit(rchn, rurl string) (chan bool, *amqp.Channel, error) {
+	cancel := make(chan bool) // zero channel only for interrupt flagging
 	conn, err := amqp.Dial(AMQP_SERVER_URL)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Error("failed to connect with AMQP server")
-		c.AbortWithStatus(http.StatusBadGateway)
-		return
+		return nil, nil, fmt.Errorf("failed: listenOnRabbit")
 	}
-	defer conn.Close()
 	rabbitCh, err := conn.Channel()
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Error("failed to declare rabbit channel")
-		c.AbortWithStatus(http.StatusBadGateway)
-		return
+		return nil, nil, fmt.Errorf("failed to connect to rabbit channel")
 	}
-	defer rabbitCh.Close()
+	// Setup the queue before even starting to listening to it
 	_, err = rabbitCh.QueueDeclare(QUEUE_KEY, true, false, false, false, nil)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"err": err,
 		}).Error("failed to declare queue with broker")
-		c.AbortWithStatus(http.StatusBadGateway)
-		return
+		return nil, nil, fmt.Errorf("failed: listenOnRabbit")
 	}
-	body := struct {
-		Msg string `json:"msg"`
-	}{Msg: "Hello world"}
-	jsonMsg, _ := json.Marshal(body)
-	err = rabbitCh.PublishWithContext(context.TODO(), "", QUEUE_KEY, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        []byte(jsonMsg),
-	})
+	msgs, err := rabbitCh.Consume(QUEUE_KEY, "", true, false, false, false, nil)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Error("failed to send message to broker")
-		c.AbortWithStatus(http.StatusBadGateway)
-		return
+		return nil, nil, fmt.Errorf("failed: listenOnRabbit")
 	}
-	c.AbortWithStatus(http.StatusOK)
+	log.Debug("success! : listenOnRabbit")
+	go func() {
+		defer conn.Close()
+		defer rabbitCh.Close()
+		for {
+			select {
+			case <-cancel:
+				log.Warn("interruption, listenOnRabbit")
+				return
+			case m := <-msgs:
+				log.WithFields(log.Fields{
+					"message": m.Body,
+				}).Debug("received message on rabbit..")
+			}
+		}
+	}()
+	return cancel, rabbitCh, nil
 }
 func main() {
 	/* ++++++++++++++++++++++
@@ -173,7 +192,18 @@ func main() {
 			// "logtofile": FLogF,
 		})
 	})
+
+	// start listening on the rabbit channel
+	// this will start a gorutine that would run in the background listening to all the incoming messages
+	// cancel channel is to interrupt the listening when program exits
+	cancel, rChn, err := listenOnRabbit(QUEUE_KEY, AMQP_SERVER_URL)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Warn("failed to start the listening channel")
+	}
+	defer close(cancel)
 	// Hit this endpoint to see this u-service send a message to the messaging queue
-	api.POST("/rabbit/test", TestRabbit)
+	api.POST("/rabbit/test", TestRabbit(rChn))
 	log.Fatal(r.Run(":8080"))
 }

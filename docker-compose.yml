@@ -12,6 +12,8 @@ services:
       - ${HOME}/dev-rabbitmq/log/:/var/log/rabbitmq
     networks:
       - dev-network
+    healthcheck:
+      test: "exit 0"
   srvapi:
     build: 
       context: .
@@ -27,11 +29,9 @@ services:
       - 8080:8080
     volumes:
       - ${LOGDIR}:${LOGDIR}
-    # links:
-    #   - mongostore
-    # depends_on:
-    #   mongostore:
-    #     condition: service_healthy
+    depends_on:
+      msgbroker:
+        condition: service_healthy
     networks:
       - dev-network
     environment: 
